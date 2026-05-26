@@ -1,0 +1,120 @@
+name: blocking-io-comment
+
+# Posts an advisory PR comment summarising new blocking-IO candidates introduced
+# by the change. Modelled after open-design/visual-pr-comment: bare gh api, no
+# third-party actions, sentinel-based upsert (single comment per PR).
+#
+# Advisory only — this workflow never fails the PR. The intent is to give
+# reviewers a single glance at any new event-loop-risk candidates without
+# burying them under historical debt (which is folded behind a baseline).
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened, ready_for_review]
+  workflow_dispatch:
+    inputs:
+      pr_number:
+        description: Pull request number to upsert the comment on.
+        required: true
+        type: string
+
+permissions:
+  contents: read
+  pull-requests: write
+
+concurrency:
+  group: blocking-io-comment-${{ github.event.pull_request.number || inputs.pr_number }}
+  cancel-in-progress: true
+
+jobs:
+  comment:
+    name: Scan and upsert blocking-IO comment
+    if: ${{ github.event_name == 'workflow_dispatch' || !github.event.pull_request.draft }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Run blocking-IO static scanner
+        run: |
+          set -euo pipefail
+          mkdir -p .deer-flow
+          PYTHONPATH=. PYTHONIOENCODING=utf-8 PYTHONUTF8=1 \
+            python3 scripts/detect_blocking_io_static.py \
+              --output .deer-flow/blocking-io-findings.json \
+              --format summary
+
+      - name: Render PR comment markdown
+        env:
+          HEAD_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+          BASE_SHA: ${{ github.event.pull_request.base.sha || '' }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          set -euo pipefail
+          if [ ! -f .deer-flow/blocking-io-baseline.json ]; then
+            echo '{"fingerprints": []}' > .deer-flow/blocking-io-baseline.json
+            echo "::warning::No baseline file present; treating every finding as new."
+          fi
+          python3 scripts/format_blocking_io_comment.py \
+            --findings .deer-flow/blocking-io-findings.json \
+            --baseline .deer-flow/blocking-io-baseline.json \
+            --output .deer-flow/blocking-io-comment.md \
+            --head-sha "$HEAD_SHA" \
+            --base-sha "$BASE_SHA" \
+            --run-url "$RUN_URL"
+          echo "::group::Comment body"
+          cat .deer-flow/blocking-io-comment.md
+          echo "::endgroup::"
+
+      - name: Upsert PR comment
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR_NUMBER: ${{ github.event.pull_request.number || inputs.pr_number }}
+        run: |
+          set -euo pipefail
+          if [ -z "$PR_NUMBER" ]; then
+            echo "No PR number resolved; skipping comment."
+            exit 0
+          fi
+
+          body_path=".deer-flow/blocking-io-comment.md"
+          comments_json="$RUNNER_TEMP/comments.json"
+
+          gh api --paginate \
+            "repos/$GITHUB_REPOSITORY/issues/$PR_NUMBER/comments" > "$comments_json"
+
+          comment_id="$(jq -r \
+            '.[] | select(.body | contains("<!-- blocking-io-bot -->")) | .id' \
+            "$comments_json" | tail -n 1)"
+
+          if [ -n "$comment_id" ] && [ "$comment_id" != "null" ]; then
+            echo "Updating existing comment $comment_id"
+            gh api --method PATCH \
+              "repos/$GITHUB_REPOSITORY/issues/comments/$comment_id" \
+              --field "body=$(cat "$body_path")"
+          else
+            echo "Posting new comment on PR #$PR_NUMBER"
+            gh api --method POST \
+              "repos/$GITHUB_REPOSITORY/issues/$PR_NUMBER/comments" \
+              --field "body=$(cat "$body_path")"
+          fi
+
+      - name: Upload artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: blocking-io-${{ github.event.pull_request.number || inputs.pr_number || github.run_id }}
+          path: |
+            .deer-flow/blocking-io-findings.json
+            .deer-flow/blocking-io-comment.md
+          if-no-files-found: ignore
+          retention-days: 14

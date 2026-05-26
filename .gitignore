@@ -35,7 +35,8 @@ extensions_config.json
 # Coverage report
 coverage.xml
 coverage/
-.deer-flow/
+.deer-flow/*
+!.deer-flow/blocking-io-baseline.json
 .claude/
 skills/custom/*
 logs/
