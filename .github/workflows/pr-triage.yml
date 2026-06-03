@@ -100,6 +100,31 @@ jobs:
               `validation=${desired.includes('needs-validation')} ` +
               `(+${toAdd.join(',') || '-'} / -${toRemove.join(',') || '-'})`);
 
+  first-time:
+    if: github.event_name == 'pull_request_target' && github.event.action == 'opened'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Label first-time contributors
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const pr = context.payload.pull_request;
+            const { owner, repo } = context.repo;
+            const assoc = pr.author_association;
+            const isBot = pr.user.type === 'Bot';
+            core.info(`author=${pr.user.login} association=${assoc} bot=${isBot}`);
+
+            // FIRST_TIME_CONTRIBUTOR = no prior merged commit to this repo;
+            // FIRST_TIMER = no prior commit anywhere on GitHub. Either counts.
+            if (isBot || !['FIRST_TIME_CONTRIBUTOR', 'FIRST_TIMER'].includes(assoc)) {
+              core.info('Not a first-time contributor; skipping.');
+              return;
+            }
+            await github.rest.issues.addLabels({
+              owner, repo, issue_number: pr.number, labels: ['first-time-contributor'],
+            });
+            core.info(`Added first-time-contributor to #${pr.number}.`);
+
   reviewing:
     if: github.event_name == 'pull_request_review'
     runs-on: ubuntu-latest

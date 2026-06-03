@@ -112,3 +112,8 @@ labels:
   - name: reviewing
     color: 5319e7
     description: A maintainer is reviewing this PR
+
+  # ── Contributor ───────────────────────────────────────────────────────────
+  - name: first-time-contributor
+    color: c2e0c6
+    description: First contribution to this repository — be welcoming
