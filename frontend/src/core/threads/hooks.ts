@@ -110,7 +110,10 @@ export function findLatestUnloadedRunIndex(
   runs: Run[],
   loadedRunIds: ReadonlySet<string>,
 ): number {
-  for (let i = 0; i < runs.length; i++) {
+  // DEMO ONLY (revert of #3354): iterate from the END again — the exact #3352
+  // bug. Combined with the newest-first runs list and per-run prepend, this
+  // inverts chronological order on reload. The multi-run-order e2e turns RED.
+  for (let i = runs.length - 1; i >= 0; i--) {
     const run = runs[i];
     if (run && !loadedRunIds.has(run.run_id)) {
       return i;
