@@ -32,3 +32,5 @@ export function formatTimeAgo(date: Date | string | number, locale?: Locale) {
     locale: getDateFnsLocale(effectiveLocale),
   });
 }
+
+// ci scope probe: frontend-only change
